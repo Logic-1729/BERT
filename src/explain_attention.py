@@ -76,7 +76,7 @@ def main():
     ensure_dir(args.out_dir)
 
     tokenizer = load_tokenizer(args.ckpt, use_fast=True)
-    model = load_model(args.ckpt)
+    model = load_model(args.ckpt, attn_implementation="eager")
     model.eval()
 
     inputs = tokenizer(args.text, truncation=True, max_length=128, return_tensors="pt")

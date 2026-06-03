@@ -58,8 +58,9 @@ def main():
     y_pred: List[int] = []
 
     import torch
+    from tqdm import tqdm
 
-    for row in dsd["test"]:
+    for row in tqdm(dsd["test"], desc="Evaluating", unit="samples"):
         text = row[text_field]
         label = int(row[label_field])
         inputs = encode(text)

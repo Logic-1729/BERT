@@ -42,7 +42,9 @@ def main():
 
     # Save SHAP visualization
     html_path = os.path.join(args.out_dir, "shap_explanation.html")
-    shap.plots.save_html(html_path, shap.plots.text(shap_values))
+    html = shap.plots.text(shap_values, display=False)
+    with open(html_path, "w", encoding="utf-8") as f:
+        f.write(html)
 
     print(f"Saved SHAP explanation to: {html_path}")
     print("Tip: Open the HTML in a browser to see red/blue token highlights.")
