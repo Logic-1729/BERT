@@ -2,12 +2,12 @@ seed: 42
 
 task:
   name: thucnews
-  num_labels: 10
+  num_labels: 14
   text_field: text
   label_field: label
 
 model:
-  pretrained_name: bert-base-chinese
+  pretrained_name: hfl/chinese-macbert-base
   max_length: 256
 
 train:

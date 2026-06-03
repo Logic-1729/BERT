@@ -9,6 +9,7 @@ from lime.lime_text import LimeTextExplainer
 from transformers import pipeline
 
 from src.utils.common import ensure_dir, load_yaml
+from src.utils.model_loader import resolve_model_path
 
 
 def parse_args():
@@ -28,10 +29,12 @@ def main():
 
     ensure_dir(args.out_dir)
 
+    model_path = resolve_model_path(args.ckpt)
+
     clf = pipeline(
         task="text-classification",
-        model=args.ckpt,
-        tokenizer=args.ckpt,
+        model=model_path,
+        tokenizer=model_path,
         return_all_scores=True,
         device=-1,
     )

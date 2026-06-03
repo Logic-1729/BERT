@@ -1,10 +1,10 @@
-# BERT + SHAP/LIME 文本细粒度分类（项目框架）
+# BERT + 可解释性（SHAP / LIME / Attention）文本细粒度分类
 
-本项目面向课程大作业/科研小项目选题：**小模型（BERT 类）结合可解释性工具（SHAP/LIME）的文本细粒度分类**。
+本项目面向课程大作业/科研小项目选题：**小模型（BERT 类）结合多种可解释性方法的文本细粒度分类**。
 
 - 不依赖大模型（LLM），算力友好（单卡 RTX 4060 级别即可）。
-- 技术成熟：BERT 文本分类可快速收敛，易于获得较高准确率。
-- 易出彩：通过 SHAP/LIME 生成可解释性可视化（高亮/条形图），报告素材丰富。
+- 技术成熟：MacBERT（hfl/chinese-macbert-base）文本分类可快速收敛，易于获得较高准确率。
+- 易出彩：通过 SHAP / LIME / Attention Pattern 三种方法生成可解释性可视化，报告素材丰富。
 
 ## 1. 任务与选题说明
 
@@ -16,9 +16,9 @@
 - **情感极性分类（二分类/多级）**：正面/负面（可扩展为多级评分）。
 
 ### 1.2 为什么可行且效果稳定
-- BERT（如 `bert-base-chinese`）在中文分类任务上方案成熟。
+- MacBERT（`hfl/chinese-macbert-base`）在中文分类任务上表现优于原生 BERT，采用全词掩码 + 纠错预训练，语义理解更强。
 - 使用 Hugging Face Transformers，训练/推理流程标准化。
-- SHAP 对 Transformers 有现成接口，可直接对 token 贡献度可视化。
+- SHAP / Attention Pattern 对 Transformers 有现成接口，可直接对 token 贡献度可视化。
 
 ## 2. 数据集
 
@@ -42,7 +42,7 @@
 - TF-IDF + Logistic Regression / Linear SVM
 
 ### 3.2 主模型：BERT 文本分类
-- 预训练模型：`bert-base-chinese`（可替换 TinyBERT/ALBERT 等）
+- 预训练模型：`hfl/chinese-macbert-base`（可替换 TinyBERT/ALBERT 等）
 - 分类头：`[CLS]` 表征 + Linear
 
 ### 3.3 训练细节（建议写入报告）
@@ -70,48 +70,144 @@
 - 作为局部可解释性对照方法
 - 与 SHAP 的解释差异：稳定性、可重复性、粒度
 
-### 5.3 可视化素材清单（建议最终报告必须包含）
+### 5.3 Attention Pattern（基于 Self-Attention）
+- 直接可视化 Transformer 内部的注意力权重矩阵
+- 展示每层每个 head 的 token-to-token 注意力分布
+- 对比 [CLS] token 在不同层对输入 token 的关注变化
+
+输出：
+- 全局平均注意力热力图（所有层和 head 平均）
+- 逐层注意力网格图
+- 特定层的 per-head 注意力细节
+- [CLS] token 的跨层注意力演化
+
+报告可写：
+- 注意力模式如何反映模型的推理过程
+- 与 SHAP/LIME 的区别：注意力是模型内部的、前向的权重分布，SHAP/LIME 是后验的贡献度估计
+- 三种方法的互补性：Attention 看"模型关注了什么"，SHAP 看"每个词贡献了多少"，LIME 看"局部决策边界"
+
+### 5.4 可视化素材清单（建议最终报告必须包含）
 - 训练曲线（loss/acc）
 - 混淆矩阵
 - 分类报告表格
 - SHAP text plot（红蓝高亮）/ summary plot
 - LIME explanation 示例
+- Attention 热力图（全局平均 / 逐层 / 逐 head / CLS 跨层）
 
 ## 6. 拓展创新点（可选加分项）
 
+- **多种可解释性方法对比**：SHAP vs LIME vs Attention Pattern 在本项目中已内置
 - **细粒度类别**：更多类别、层级标签（粗->细）
-- **模型对比**：BERT vs TinyBERT/DistilBERT/ALBERT
+- **模型对比**：MacBERT vs TinyBERT/DistilBERT/ALBERT
 - **解释稳定性**：不同 seed、同义改写下解释一致性
-- **误差分析**：对混淆最严重的类别做 SHAP/LIME 对比
+- **误差分析**：对混淆最严重的类别做 SHAP/LIME/Attention 对比
 
 ## 7. 快速开始
 
 ### 7.1 环境安装
+
+**方式一：一键脚本（推荐）**
 ```bash
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\\Scripts\\activate
+bash scripts/setup_env.sh
+```
+自动创建 conda 环境 `bert-interp`（Python 3.10），安装 PyTorch CUDA 12.1 + 全部依赖。
+
+**方式二：手动安装**
+```bash
+conda create -y -n bert-interp python=3.10
+conda activate bert-interp
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 pip install -r requirements.txt
 ```
 
-### 7.2 训练（示例）
+### 7.2 配置镜像（国内用户）
+
+模型加载默认优先走 ModelScope（阿里魔搭，国内无需代理），下载失败时自动回退到 HuggingFace。
+
+```bash
+# 可选：设置 HF 镜像作为后备
+export HF_ENDPOINT=https://hf-mirror.com
+```
+
+### 7.3 准备数据集
+
+**方式一：自动下载（国内网络可能不稳定）**
+```bash
+python scripts/prepare_thucnews.py
+```
+脚本使用 `wget` 断点续传从 hf-mirror 下载数据（约 2.2 GB），支持中断后续传。下载完成后自动按 80/10/10 划分为 train/valid/test JSONL。
+
+采样选项：
+```bash
+# 默认：每类 5000 条训练样本（共 5 万条），4060 约 1.5 小时完成训练
+python scripts/prepare_thucnews.py
+
+# 快速验证：每类 2000 条
+python scripts/prepare_thucnews.py --max_per_class 2000
+
+# 完整数据集
+python scripts/prepare_thucnews.py --full
+```
+
+**方式二：手动下载（推荐，更可靠）**
+
+如果自动下载因网络原因失败，脚本会提示手动下载步骤：
+
+1. 用浏览器或下载工具打开以下链接，下载 `THUCNews.jsonl`：
+   ```
+   https://hf-mirror.com/datasets/SirlyDreamer/THUCNews/resolve/main/THUCNews.jsonl
+   ```
+2. 将下载的文件放到 `data/thucnews/THUCNews.jsonl`
+3. 运行脚本处理：
+   ```bash
+   python scripts/prepare_thucnews.py --local data/thucnews/THUCNews.jsonl
+   ```
+
+数据处理后存入 `data/thucnews/{train,valid,test}.jsonl` + `label2id.json`。
+
+### 7.4 训练（训练完自动输出测试集指标）
 ```bash
 python -m src.train --config configs/bert_thucnews.yaml
 ```
+训练结束后自动在测试集上计算 Accuracy、Macro-F1 和每类 Precision/Recall/F1。
+模型保存至 `outputs/bert_thucnews/`，预测结果保存至 `outputs/bert_thucnews/test_predictions.jsonl`。
 
-### 7.3 评测并生成混淆矩阵
+### 7.5 生成混淆矩阵（详细评测）
 ```bash
-python -m src.evaluate --config configs/bert_thucnews.yaml --ckpt outputs/best
+python -m src.evaluate --config configs/bert_thucnews.yaml --ckpt outputs/bert_thucnews --assets_dir assets
+```
+输出：
+- `assets/confusion_matrix_thucnews.png` — 归一化混淆矩阵热力图
+- `assets/classification_report_thucnews.json` — 每类 Precision/Recall/F1
+
+### 7.6 可解释性分析
+
+确认测试集指标达标后，对具体样本进行可解释性分析：
+
+```bash
+CKPT=outputs/bert_thucnews
+CONFIG=configs/bert_thucnews.yaml
+TEXT="这是一条示例中文新闻文本"
+
+# SHAP：token 级别 Shapley 贡献度（红蓝高亮）
+python -m src.explain_shap --config $CONFIG --ckpt $CKPT --text "$TEXT"
+
+# LIME：局部线性近似解释
+python -m src.explain_lime --config $CONFIG --ckpt $CKPT --text "$TEXT" --num_samples 1000
+
+# Attention：自注意力权重热力图
+python -m src.explain_attention --config $CONFIG --ckpt $CKPT --text "$TEXT"
+
+# 查看最后一层每个 head 的注意力细节
+python -m src.explain_attention --config $CONFIG --ckpt $CKPT --text "$TEXT" --layer -1
 ```
 
-### 7.4 生成 SHAP 可视化
-```bash
-python -m src.explain_shap --config configs/bert_thucnews.yaml --ckpt outputs/best --text "差评，态度恶劣，体验很差"
-```
-
-### 7.5 生成 LIME 可视化
-```bash
-python -m src.explain_lime --config configs/bert_thucnews.yaml --ckpt outputs/best --text "差评，态度恶劣，体验很差"
-```
+产物汇总：
+| 方法 | 产物 | 用途 |
+|------|------|------|
+| SHAP | `assets/shap/shap_explanation.html` | Token 贡献度红蓝高亮 |
+| LIME | `assets/lime/lime_explanation.html` | 特征权重排序 |
+| Attention | `assets/attention/attention_*.png` | 注意力热力图（4 张） |
 
 ## 8. 目录结构（计划）
 
@@ -125,7 +221,8 @@ python -m src.explain_lime --config configs/bert_thucnews.yaml --ckpt outputs/be
 │   ├── train.py
 │   ├── evaluate.py
 │   ├── explain_shap.py
-│   └── explain_lime.py
+│   ├── explain_lime.py
+│   └── explain_attention.py
 ├── assets/              # 输出图表（混淆矩阵、SHAP/LIME 可视化）
 ├── outputs/             # 模型权重与日志
 └── requirements.txt

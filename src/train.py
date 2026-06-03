@@ -8,8 +8,6 @@ from typing import Dict
 import numpy as np
 from datasets import DatasetDict
 from transformers import (
-    AutoModelForSequenceClassification,
-    AutoTokenizer,
     DataCollatorWithPadding,
     Trainer,
     TrainingArguments,
@@ -18,6 +16,7 @@ from transformers import (
 from src.data.loaders import load_splits
 from src.utils.common import ensure_dir, load_yaml, set_seed
 from src.utils.metrics import softmax
+from src.utils.model_loader import load_model, load_tokenizer
 
 
 def parse_args():
@@ -45,7 +44,7 @@ def main():
     )
     dsd = DatasetDict(splits)
 
-    tokenizer = AutoTokenizer.from_pretrained(model_cfg["pretrained_name"], use_fast=True)
+    tokenizer = load_tokenizer(model_cfg["pretrained_name"], use_fast=True)
 
     text_field = task_cfg.get("text_field", "text")
     label_field = task_cfg.get("label_field", "label")
@@ -63,9 +62,7 @@ def main():
     dsd.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
 
     num_labels = int(task_cfg["num_labels"])
-    model = AutoModelForSequenceClassification.from_pretrained(
-        model_cfg["pretrained_name"], num_labels=num_labels
-    )
+    model = load_model(model_cfg["pretrained_name"], num_labels=num_labels)
 
     data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 
@@ -103,7 +100,6 @@ def main():
         args=training_args,
         train_dataset=dsd["train"],
         eval_dataset=dsd["validation"],
-        tokenizer=tokenizer,
         data_collator=data_collator,
         compute_metrics=compute_metrics,
     )
@@ -114,15 +110,34 @@ def main():
     trainer.save_model(train_cfg["output_dir"])
     tokenizer.save_pretrained(train_cfg["output_dir"])
 
-    # quick test prediction dump
+    # ---- test set evaluation ----
     preds = trainer.predict(dsd["test"])
-    prob = softmax(preds.predictions)
+    logits = preds.predictions
+    labels = preds.label_ids
+    prob = softmax(logits)
+    y_pred = logits.argmax(axis=-1)
+    y_true = labels
+
+    acc = float((y_pred == y_true).mean())
+    from sklearn.metrics import f1_score, classification_report
+
+    macro_f1 = float(f1_score(y_true, y_pred, average="macro"))
+    print(f"\n{'='*50}")
+    print(f"  Test Set Results")
+    print(f"{'='*50}")
+    print(f"  Accuracy : {acc:.4f}")
+    print(f"  Macro-F1 : {macro_f1:.4f}")
+    print(f"{'='*50}")
+    print(classification_report(y_true, y_pred, digits=4, zero_division=0))
+
+    # save predictions
     out_path = os.path.join(train_cfg["output_dir"], "test_predictions.jsonl")
     with open(out_path, "w", encoding="utf-8") as f:
-        for p in prob:
+        for i, p in enumerate(prob):
             row = {
                 "pred": int(p.argmax()),
                 "prob": [float(x) for x in p],
+                "true": int(y_true[i]),
             }
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
 

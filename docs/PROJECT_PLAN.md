@@ -39,7 +39,8 @@
 ### 3.4 可解释性方法
 - **SHAP**：基于 Shapley 值，token 级别的贡献度分析
 - **LIME**：局部线性近似，扰动采样方法
-- 两者的对比优劣
+- **Attention Pattern**：可视化 Transformer 内部的自注意力权重矩阵，分析模型关注模式
+- 三者的对比优劣
 
 ---
 
@@ -61,7 +62,12 @@
 - **LIME 可视化**：
   - 截图或嵌入 `assets/lime/lime_explanation.html`
   - 特征权重排序
-- **对比分析**：SHAP 与 LIME 对同一样本的解释异同
+- **Attention 可视化**：
+  - `assets/attention/attention_global_avg.png`（全局平均注意力热力图）
+  - `assets/attention/attention_per_layer.png`（逐层注意力网格）
+  - `assets/attention/attention_cls_per_layer.png`（[CLS] 跨层注意力演化）
+  - `assets/attention/attention_layer_N_heads.png`（指定层 per-head 细节）
+- **对比分析**：SHAP、LIME、Attention 三种方法对同一样本的解释异同
 
 ---
 
@@ -69,7 +75,7 @@
 
 - 模型表现的强弱点？哪些类别容易混淆？
 - 可解释性分析的启示：模型是否"看对了"关键词？
-- SHAP 与 LIME 的方法论差异与实用性差异
+- SHAP / LIME / Attention 三种方法的方法论差异与实用性差异
 - 可能的改进方向（数据增强、模型优化等）
 
 ---
@@ -146,13 +152,36 @@ python -m src.explain_lime \
 - `assets/lime/lime_explanation.html`（在浏览器中打开）
 - 截图放入报告
 
+#### 2.5 Attention 可视化
+```bash
+python -m src.explain_attention \
+  --config configs/bert_thucnews.yaml \
+  --ckpt outputs/bert_thucnews \
+  --text "一段示例中文文本" \
+  --out_dir assets/attention
+
+# 查看最后一层 per-head 细节
+python -m src.explain_attention \
+  --config configs/bert_thucnews.yaml \
+  --ckpt outputs/bert_thucnews \
+  --text "一段示例中文文本" \
+  --out_dir assets/attention \
+  --layer -1
+```
+输出：
+- `assets/attention/attention_global_avg.png`（全局平均注意力热力图）
+- `assets/attention/attention_per_layer.png`（逐层注意力网格）
+- `assets/attention/attention_cls_per_layer.png`（[CLS] 跨层注意力演化）
+- `assets/attention/attention_layer_12_heads.png`（指定层 per-head 细节）
+- 截图放入报告
+
 ### 步骤 3：ChnSentiCorp 训练与评测
 
 重复步骤 2 的流程，将 `bert_thucnews` 改为 `bert_chnsenticorp`。
 
 ### 步骤 4：可解释性对比分析
 
-在相同的测试样本上分别运行 SHAP 和 LIME，对比它们的解释结果。
+在相同的测试样本上分别运行 SHAP、LIME 和 Attention 可视化，对比三种方法的解释结果。
 
 ### 步骤 5：生成报告
 
@@ -172,6 +201,7 @@ python -m src.explain_lime \
 | 分类报告（ChnSentiCorp） | `assets/classification_report_chnsenticorp.json` | 数据附录或结果部分 |
 | SHAP 可视化 | `assets/shap/shap_explanation.html` 截图 | 可解释性分析 |
 | LIME 可视化 | `assets/lime/lime_explanation.html` 截图 | 可解释性分析 |
+| Attention 可视化 | `assets/attention/attention_*.png` 截图 | 可解释性分析 |
 | 训练曲线（可选） | Hugging Face Trainer 的 eval loss 与 accuracy 曲线 | 训练细节 |
 | 数据分布分析（可选） | 类别分布、文本长度分布 | 背景/方法部分 |
 

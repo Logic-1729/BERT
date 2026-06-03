@@ -6,11 +6,10 @@ import os
 from typing import List
 
 from datasets import DatasetDict
-from transformers import AutoModelForSequenceClassification, AutoTokenizer
-
 from src.data.loaders import load_splits
 from src.utils.common import ensure_dir, load_yaml, set_seed
 from src.utils.metrics import build_classification_report
+from src.utils.model_loader import load_model, load_tokenizer
 from src.utils.plot import plot_confusion_matrix
 
 
@@ -44,8 +43,8 @@ def main():
     )
     dsd = DatasetDict(splits)
 
-    tokenizer = AutoTokenizer.from_pretrained(args.ckpt, use_fast=True)
-    model = AutoModelForSequenceClassification.from_pretrained(args.ckpt)
+    tokenizer = load_tokenizer(args.ckpt, use_fast=True)
+    model = load_model(args.ckpt, num_labels=task_cfg["num_labels"])
     model.eval()
 
     text_field = task_cfg.get("text_field", "text")
