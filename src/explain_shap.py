@@ -1,0 +1,50 @@
+from __future__ import annotations
+
+import argparse
+import os
+
+import shap
+from transformers import pipeline
+
+from src.utils.common import ensure_dir, load_yaml
+
+
+def parse_args():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--config", required=True, help="Path to configs/*.yaml")
+    ap.add_argument("--ckpt", required=True, help="Model checkpoint dir")
+    ap.add_argument("--text", required=True, help="Text to explain")
+    ap.add_argument("--out_dir", default="assets/shap", help="Output directory")
+    return ap.parse_args()
+
+
+def main():
+    args = parse_args()
+    _ = load_yaml(args.config)
+
+    ensure_dir(args.out_dir)
+
+    # Use Hugging Face pipeline for SHAP integration
+    clf = pipeline(
+        task="text-classification",
+        model=args.ckpt,
+        tokenizer=args.ckpt,
+        return_all_scores=True,
+        device=-1,
+    )
+
+    # Create SHAP explainer for the pipeline
+    explainer = shap.Explainer(clf)
+    shap_values = explainer([args.text])
+
+    # Save SHAP visualization
+    html_path = os.path.join(args.out_dir, "shap_explanation.html")
+    shap.plots.save_html(html_path, shap.plots.text(shap_values))
+
+    print(f"Saved SHAP explanation to: {html_path}")
+    print("Tip: Open the HTML in a browser to see red/blue token highlights.")
+    print("Take a screenshot to include in your report for model interpretability analysis.")
+
+
+if __name__ == "__main__":
+    main()
