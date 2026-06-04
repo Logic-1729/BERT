@@ -209,6 +209,73 @@ python -m src.explain_attention --config $CONFIG --ckpt $CKPT --text "$TEXT" --l
 | LIME | `assets/lime/lime_explanation.html` | 特征权重排序 |
 | Attention | `assets/attention/attention_*.png` | 注意力热力图（4 张） |
 
+### 7.7 创新拓展：注意力机制深度分析
+
+在基础可解释性之上，本项目提供三个创新拓展方向，仅需少量代码即可产出具有学术深度的实验结果。
+
+#### 创新一：词性引导的注意力裁剪（POS-Guided Attention Mask Pruning）
+
+核心论点：模型将大量注意力浪费在 `[CLS]`、标点和虚词上。通过词性标注动态修改 `attention_mask`，将模型注意力强制引导至名词、动词等实义词，验证分类效果是否提升。
+
+```bash
+python -m src.explain_attention_prune \
+  --config configs/bert_thucnews.yaml \
+  --ckpt outputs/bert_thucnews \
+  --text "今天下午在北京国家会议中心举办科技创新大会，多位企业家和科学家出席演讲。"
+```
+
+输出：
+- `assets/attention_prune/attention_prune_comparison.png` — 原始 vs 词性引导的注意力热力图对比
+- `assets/attention_prune/attention_prune_cls_shift.png` — [CLS] token 注意力权重迁移柱状图
+- 终端输出每个 token 的词性标注结果（蓝色加粗 = 内容词，普通 = 功能词）
+
+#### 创新二：基于注意力权重的关键词抽取（Attention-based Keyword Extraction）
+
+核心论点：最后一层 [CLS] token 对输入 token 的注意力权重，本身就是模型视角的"词汇重要性打分"。将其作为关键词抽取器，与 TF-IDF 基线对比。
+
+```bash
+python -m src.explain_attention_keywords \
+  --config configs/bert_thucnews.yaml \
+  --ckpt outputs/bert_thucnews \
+  --text "苹果公司今天发布了最新的iPhone 15系列手机，采用了全新的3纳米芯片技术。" \
+  --top_k 5
+```
+
+输出：
+- `assets/attention_keywords/attention_keywords_comparison.png` — Attention vs TF-IDF 关键词对比图
+- `assets/attention_keywords/attention_keywords_result.json` — 结构化结果（含两方法关键词及得分）
+
+#### 创新三：注意力头/层剪枝消融实验（Head & Layer Pruning Ablation）
+
+核心论点：BERT 12 层 × 12 头 = 144 个注意力头存在巨大信息冗余。系统性地剪掉不同层、不同比例的头，测量模型准确率的退化曲线，揭示哪些组件是关键、哪些是冗余。
+
+```bash
+# 快速验证（50 条样本，约 2 分钟）
+python -m src.explain_attention_ablation \
+  --config configs/bert_thucnews.yaml \
+  --ckpt outputs/bert_thucnews \
+  --max_samples 50
+
+# 完整实验（建议 500-1000 条样本，约 15-30 分钟）
+python -m src.explain_attention_ablation \
+  --config configs/bert_thucnews.yaml \
+  --ckpt outputs/bert_thucnews \
+  --max_samples 500
+```
+
+实验设计（自动完成所有对比组）：
+
+| 实验组 | 操作 | 预期发现 |
+|--------|------|---------|
+| Baseline | 完整模型 | 准确率基线 |
+| 按层组剪枝 | 依次剪掉 Bottom L1-L4 / Middle L5-L8 / Top L9-L12 全部 12 个头 | 底层是关键（断崖下跌），顶层可裁剪 |
+| [CLS]-Heavy 剪枝 | 按 [CLS] 自注意力权重从高到低，剪掉 10%→50% 的头 | [CLS] 重头承载关键信息 |
+| 随机剪枝 | 随机剪掉 10%→50% 的头（对照组） | 随机剪枝破坏性更小 |
+
+输出：
+- `assets/attention_ablation/ablation_layers.png` — 消融实验结果柱状图
+- `assets/attention_ablation/ablation_results.json` — 完整实验数据
+
 ## 8. 目录结构（计划）
 
 ```
@@ -222,8 +289,11 @@ python -m src.explain_attention --config $CONFIG --ckpt $CKPT --text "$TEXT" --l
 │   ├── evaluate.py
 │   ├── explain_shap.py
 │   ├── explain_lime.py
-│   └── explain_attention.py
-├── assets/              # 输出图表（混淆矩阵、SHAP/LIME 可视化）
+│   ├── explain_attention.py
+│   ├── explain_attention_prune.py    # 创新一：词性引导注意力裁剪
+│   ├── explain_attention_keywords.py # 创新二：注意力关键词抽取
+│   └── explain_attention_ablation.py # 创新三：头/层剪枝消融实验
+├── assets/              # 输出图表（混淆矩阵、SHAP/LIME/Attention 可视化、消融曲线）
 ├── outputs/             # 模型权重与日志
 └── requirements.txt
 ```
