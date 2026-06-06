@@ -58,7 +58,7 @@ def extract_tfidf_keywords(text, top_k=5):
     feature_names = vectorizer.get_feature_names_out()
     tfidf_scores = tfidf_matrix.toarray()[0]
     ranked = sorted(
-        [(f, float(s)) for f, s in zip(feature_names, tfidf_scores) if s > 0],
+        [(f, float(s)) for f, s in zip(feature_names, tfidf_scores) if s > 0 and f.strip()],
         key=lambda x: x[1],
         reverse=True,
     )
@@ -89,12 +89,13 @@ def plot_keyword_comparison(attn_keywords, tfidf_keywords, tokens, cls_attn, out
     if tfidf_keywords:
         labels = [kw[0] for kw in tfidf_keywords]
         values = [kw[1] for kw in tfidf_keywords]
-        axes[1].barh(range(len(labels)), values, color="steelblue")
-        axes[1].set_yticks(range(len(labels)))
-        axes[1].set_yticklabels(labels, fontsize=10)
+        y_pos = list(range(len(labels)))
+        axes[1].barh(y_pos, values, color="steelblue")
+        axes[1].set_yticks(y_pos, labels=labels, fontsize=10)
         axes[1].set_xlabel("TF-IDF Score")
         axes[1].set_title("TF-IDF Keywords (Baseline)")
         axes[1].invert_yaxis()
+        axes[1].set_ylim(-0.5, len(labels) - 0.5)
 
     plt.suptitle("Keyword Extraction: Attention vs TF-IDF", fontsize=13)
     plt.tight_layout()

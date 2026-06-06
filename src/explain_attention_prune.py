@@ -45,16 +45,38 @@ def map_pos_to_tokens(text: str, token_list: list[str]) -> list[str]:
     return tags
 
 
-def boosted_attention_mask(original_mask: torch.Tensor, tags: list[str], boost: float = 2.0, suppress: float = 0.3):
-    mask = original_mask.clone().float()
+def boosted_attention_mask(original_mask: torch.Tensor, tags: list[str], boost: float = 1.0, suppress: float = -0.5) -> torch.Tensor:
+    """Create a 4D attention bias mask based on POS tags.
+
+    In transformers v5.x, the 2D attention_mask is internally cast to ``torch.bool``
+    inside ``_preprocess_mask_arguments``, so scaled float values (2.0, 0.3) are
+    indistinguishable from the original 1.0 — the pruning has **no effect**.
+
+    A 4D mask of shape ``[1, 1, seq_len, seq_len]`` bypasses this conversion and
+    is added directly to the attention logits (Q·Kᵀ / √dₖ) before softmax:
+        - positive bias → boosted attention
+        - negative bias → suppressed attention
+        - 0.0 → no change
+
+    Returns:
+        4D float tensor ``[1, 1, seq_len, seq_len]`` with additive biases.
+    """
+    seq_len = original_mask.shape[1]
+    bias = torch.zeros(1, 1, seq_len, seq_len, dtype=torch.float32)
+    finfo_min = torch.finfo(torch.float32).min
+
     for i, tag in enumerate(tags):
+        if original_mask[0, i].item() == 0:
+            bias[0, 0, :, i] = finfo_min
+            continue
         if tag == "special":
             continue
         if tag in CONTENT_POS:
-            mask[0, i] *= boost
+            bias[0, 0, :, i] += boost
         elif tag in FUNCTION_POS:
-            mask[0, i] *= suppress
-    return mask
+            bias[0, 0, :, i] += suppress
+
+    return bias
 
 
 def plot_attention_comparison(original_attn, pruned_attn, tokens, tags, out_path):

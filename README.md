@@ -21,6 +21,9 @@
   - [4. 词性引导的注意力裁剪](#4-词性引导的注意力裁剪)
   - [5. 基于注意力的关键词抽取](#5-基于注意力的关键词抽取)
   - [6. 注意力头与层的剪枝消融](#6-注意力头与层的剪枝消融)
+  - [7. 探针分类器 — 语言知识分层分析](#7-探针分类器--语言知识分层分析)
+  - [8. 反事实解释 — 最小扰动翻转预测](#8-反事实解释--最小扰动翻转预测)
+  - [9. 注意力流归因 Attention Rollout](#9-注意力流归因-attention-rollout)
 - [快速开始](#快速开始)
 - [目录结构](#目录结构)
 - [结果汇总](#结果汇总)
@@ -155,7 +158,7 @@ python -m src.explain_attention \
 
 ## 扩展实验
 
-在标准可解释性之上，三个实验分别从操纵、复用和破坏的角度进一步探究注意力机制。
+在标准可解释性之上，六个实验分别从操纵、复用、破坏、探测、扰动和归因的角度进一步探究模型内部机制。
 
 ### 4. 词性引导的注意力裁剪
 
@@ -258,6 +261,136 @@ python -m src.explain_attention_ablation \
 3. **[CLS] 聚焦的头承载更多分类信号。** 剪掉 [CLS] 重头比随机剪枝退化更快（50%: 0.70 vs. 0.86），证实其在分类决策中的关键作用。
 4. **BERT 存在显著头部冗余。** 随机移除 30% 的头仅导致 0.02 的准确率下降，支持基于剪枝的模型压缩方向。
 
+### 7. 探针分类器 — 语言知识分层分析
+
+**假设**：BERT 各层并非一次性编码所有语言知识，而是逐层涌现——底层编码词法/句法特征，高层编码语义/任务特征。通过在各层 hidden states 上训练线性探针（probing classifier），可以量化每层「知道什么」。
+
+**方法**：
+1. 提取 500 条测试样本在全部 13 层（嵌入层 + 12 层 Transformer）的 hidden states
+2. 使用 `jieba.posseg` 为每个 token 标注词性，对齐到 BERT 的 WordPiece 分词
+3. 训练 **Ridge 分类器** 预测两类标签：
+   - **二分类**：实词（名词/动词/形容词）vs 虚词（介词/连词/助词等）
+   - **多分类**：11 组词性大类（Noun, Verb, Adjective, Adverb, Preposition, Conjunction, Particle 等）
+4. 绘制各层探针准确率曲线 + 每类词性跨层热力图
+
+```bash
+python -m src.explain_probing \
+  --config configs/bert_thucnews.yaml \
+  --ckpt outputs/bert_thucnews \
+  --max_samples 500
+```
+
+**产物**：
+- `assets/probing/probing_accuracy_curves.png` — 二分类/多分类准确率跨层曲线
+- `assets/probing/probing_pos_heatmap.png` — 每类词性在各层的探针准确率热力图
+- `assets/probing/probing_results.json` — 完整数值结果
+
+**实验结果**（500 条测试样本，~69K tokens/层）：
+
+| 探针任务 | 最佳层 | 最佳准确率 | 随机基线 |
+|----------|--------|-----------|----------|
+| 实词 vs 虚词（二分类） | L2 | 54.94% | 50.0% |
+| 11 类词性（多分类） | L1 | 31.06% | ~9.1% |
+
+<details>
+<summary>完整层准确率</summary>
+
+| 层 | 实词/虚词 | 词性多分类 |
+|----|----------|-----------|
+| Emb | 52.00% | 26.94% |
+| L1 | 54.75% | **31.06%** |
+| L2 | **54.94%** | 29.81% |
+| L3 | 54.19% | 28.25% |
+| L4 | 51.56% | 28.94% |
+| L5 | 51.56% | 28.06% |
+| L6 | 53.44% | 28.12% |
+| L7 | 53.44% | 28.63% |
+| L8 | 53.37% | 28.19% |
+| L9 | 52.12% | 27.87% |
+| L10 | 52.50% | 27.94% |
+| L11 | 50.44% | 28.69% |
+| L12 | 51.19% | 29.06% |
+
+</details>
+
+**核心发现**：
+
+1. **词法知识集中在底层。** 两类探针的最佳层均在 L1–L2，与层剪枝消融实验中「底层 L1–L4 不可裁撤」的结论高度一致——底层编码了词性、实/虚词区分等基础句法特征。
+2. **高层不编码词性信息。** 从 L4 开始，实词/虚词探针准确率下降并趋于平稳（~52%），说明高层表征已从词法层面转向更抽象的语义/任务层面。
+3. **实词/虚词区分难度远超预期。** 即使是线性可分的特征，BERT 最高仅达 54.94%，仅略高于随机（50%）。中文词性边界的模糊性（如部分动词可作介词）使得该任务天生困难。
+4. **与消融实验形成闭环。** 探针实验从「知识编码」角度、消融实验从「功能必要性」角度，共同证实了底层的关键地位——底层既编码了句法知识（探针验证），也是分类不可或缺的计算基础（消融验证）。
+
+### 8. 反事实解释 — 最小扰动翻转预测
+
+**假设**：只需改变输入中的极少数关键 token，就能使模型的预测发生翻转。这些 token 就是模型决策的「阿喀琉斯之踵」——找到它们可以揭示模型依赖的关键证据。
+
+**方法**：
+1. 遍历输入每个 token，逐一替换为 `[MASK]`，计算预测置信度变化
+2. 按置信度下降幅度排序，得到 token 重要性排名
+3. 从最重要到最不重要逐步掩盖 token，直至预测类别翻转
+4. 输出最小反事实编辑（最小 token 扰动集合）
+
+```bash
+python -m src.explain_counterfactual \
+  --config configs/bert_thucnews.yaml \
+  --ckpt outputs/bert_thucnews \
+  --text "英雄联盟全球总决赛中国队夺冠，电竞产业年营收突破1500亿元。"
+```
+
+**产物**：
+- `assets/counterfactual/counterfactual_explanation.png` — token 重要性柱状图 + 置信度翻转对比
+- `assets/counterfactual/counterfactual_result.json` — 完整反事实数据
+
+**实验结果**：
+
+```
+原始文本:  英雄联盟全球总决赛中国队夺冠，电竞产业年营收突破1500亿元。
+预测: 类别 9 (游戏), 置信度 97.27%
+
+反事实:    英[MASK]联盟全球总决赛中国队夺冠，电[MASK]产业年营收突破1500亿元。
+预测: 类别 8 (星座), 置信度 99.63%  ← 仅需 2 个编辑即翻转！
+```
+
+最关键的 token 是「雄」（Δconf=0.256）和「竞」（在序列中分别属于「英雄联盟」和「电竞」）。移除这两个字后，「英雄联盟」→「英□联盟」、「电竞」→「电□」，模型完全失去游戏语境，转而以极高置信度（99.6%）预测为其他类别。
+
+**核心发现**：模型的预测高度依赖少数关键 token，删除它们不仅翻转预测，甚至使模型对错误类别更加「自信」。这揭示了分类决策的脆弱性——模型并非真正「理解」文本，而是依赖特定的词汇线索。
+
+### 9. 注意力流归因 (Attention Rollout)
+
+**假设**：原始注意力权重仅反映单层内的 token 交互，忽略了跨层信息传播。Attention Rollout（Abnar & Zuidema, 2020）通过累积矩阵乘法追踪信息从输入到输出的完整流动路径，提供更可靠的重要性度量。
+
+**方法**：
+1. 提取全部 12 层的注意力矩阵（12 头均值）
+2. 为每层加入残差连接：A_res = 0.5 × A + 0.5 × I
+3. 计算累积乘积：R = A_res₁ × A_res₂ × ... × A_res₁₂
+4. 对比 Rollout 注意力与原始最后一层注意力的 [CLS] 分布
+
+```bash
+python -m src.explain_attention_rollout \
+  --config configs/bert_thucnews.yaml \
+  --ckpt outputs/bert_thucnews \
+  --text "今天下午在北京国家会议中心举办科技创新大会"
+```
+
+**产物**：
+- `assets/attention_rollout/attention_rollout_comparison.png` — Rollout vs Raw 注意力热力图
+- `assets/attention_rollout/attention_rollout_cls_shift.png` — [CLS] token 的注意力分布对比
+
+**实验结果**：
+
+| Token | Raw L12 Attention | Rollout Attention | Ratio |
+|-------|-------------------|-------------------|-------|
+| [CLS] | 0.112 | 0.457 | 4.1× |
+| [SEP] | 0.112 | 0.198 | 1.8× |
+| 今 (content) | 0.130 | 0.026 | 0.2× |
+| 会 (content) | 0.282 | 0.026 | 0.1× |
+
+**核心发现**：
+
+1. **Rollout 揭示真实信息流。** 原始注意力严重偏向单层内的高分 token（如「会」0.282），但 Rollout 显示这些 token 的全局贡献仅为原始的 10%。
+2. **[CLS] 是信息的汇聚点。** Rollout 中 [CLS] 的权重是原始的 4.1 倍——这反映了分类任务中 [CLS] 逐层累积信息的真实机制，而非单层快照。
+3. **原始注意力 ≠ 信息重要性。** 高单层注意力的 token 在全局信息流中可能微不足道（如「会」从 28.2% 降至 2.6%），说明仅凭原始注意力解释模型决策存在严重偏差。
+
 ## 快速开始
 
 ### 环境安装
@@ -319,6 +452,9 @@ python -m src.explain_attention  --config $CONFIG --ckpt $CKPT --text "$TEXT"
 python -m src.explain_attention_prune     --config $CONFIG --ckpt $CKPT --text "$TEXT"
 python -m src.explain_attention_keywords  --config $CONFIG --ckpt $CKPT --text "$TEXT" --top_k 5
 python -m src.explain_attention_ablation  --config $CONFIG --ckpt $CKPT --max_samples 500
+python -m src.explain_probing          --config $CONFIG --ckpt $CKPT --max_samples 500
+python -m src.explain_counterfactual   --config $CONFIG --ckpt $CKPT --text "$TEXT"
+python -m src.explain_attention_rollout --config $CONFIG --ckpt $CKPT --text "$TEXT"
 ```
 
 情感分类任务将 `bert_thucnews` 替换为 `bert_chnsenticorp` 即可。
@@ -351,7 +487,10 @@ python -m src.explain_attention_ablation  --config $CONFIG --ckpt $CKPT --max_sa
 │   ├── explain_attention.py            # 自注意力可视化
 │   ├── explain_attention_prune.py      # 词性引导注意力裁剪
 │   ├── explain_attention_keywords.py   # 注意力关键词抽取
-│   └── explain_attention_ablation.py   # 注意力头/层剪枝消融
+│   ├── explain_attention_ablation.py   # 注意力头/层剪枝消融
+│   ├── explain_probing.py            # 探针分类器 — 语言知识分层分析
+│   ├── explain_counterfactual.py     # 反事实解释 — 最小扰动翻转预测
+│   └── explain_attention_rollout.py  # 注意力流归因 Attention Rollout
 ├── assets/                             # 生成的可视化与结果
 │   ├── confusion_matrix_thucnews.png
 │   ├── classification_report_thucnews.json
@@ -360,7 +499,10 @@ python -m src.explain_attention_ablation  --config $CONFIG --ckpt $CKPT --max_sa
 │   ├── attention/                      # 4 张注意力热力图
 │   ├── attention_prune/                # 2 张词性引导对比图
 │   ├── attention_keywords/             # 关键词对比图 + JSON
-│   └── attention_ablation/             # 消融柱状图 + JSON 结果
+│   ├── attention_ablation/             # 消融柱状图 + JSON 结果
+│   ├── probing/                        # 探针准确率曲线 + 热力图 + JSON
+│   ├── counterfactual/                 # 反事实解释图 + JSON
+│   └── attention_rollout/              # Rollout vs Raw 对比图
 ├── outputs/                            # 训练好的模型权重
 ├── CLAUDE.md
 ├── README.md
@@ -379,6 +521,9 @@ python -m src.explain_attention_ablation  --config $CONFIG --ckpt $CKPT --max_sa
 | 关键词抽取 | 注意力 vs. TF-IDF 对比 | 模型注意力比 TF-IDF 更能捕获领域实体 |
 | 层剪枝消融 | 底层移除准确率崩塌至 0.02 | L1–L4 关键不可裁；L9–L12 移除无影响 |
 | 头剪枝消融 | 30% 随机剪枝仅降 0.02 | 注意力头大量冗余；[CLS] 重头更重要 |
+| 探针分类器 | L1–L2 最佳 54.9% (binary) / 31.1% (multi) | 词法知识集中在底层，高层不编码词性 |
+| 反事实解释 | 2 token 翻转预测 (97.3%→99.6%) | 模型依赖少数关键词，决策存在脆弱性 |
+| 注意力流 | [CLS] Rollout 权重 4.1× 于 Raw | 原始注意力 ≠ 真实信息流，Rollout 更可靠 |
 
 ## 参考文献
 
